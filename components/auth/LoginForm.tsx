@@ -1,17 +1,33 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { createClient } from '../../lib/supabase/client';
+
+import AuthChallenge from './AuthChallenge';
 
 type Mode = 'login' | 'signup';
 
 export default function LoginForm({ next }: { next: string }) {
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const challengeRequired = process.env.NEXT_PUBLIC_AUTH_CAPTCHA === 'true';
+  const [captchaToken, setCaptchaToken] = useState('');
+  const [generation, setGeneration] = useState(0);
+  const confirmed = useRef(false);
+  useEffect(() => {
+    const code = new URL(window.location.href).searchParams.get('code');
+    if (!code || confirmed.current) return;
+    confirmed.current = true;
+    window.history.replaceState(null, '', '/login');
+    fetch('/api/auth/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) })
+      .then(response => { if (!response.ok) setErrorMsg('تعذر إكمال تأكيد الحساب. يمكنك محاولة تسجيل الدخول بعد تأكيد البريد.'); })
+      .catch(() => setErrorMsg('تعذر إكمال تأكيد الحساب. حاول تسجيل الدخول مجددًا.'));
+  }, []);
   const [mode, setMode] = useState<Mode>('login');
   const [status, setStatus] = useState<'idle' | 'submitting' | 'confirm-email'>('idle');
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (challengeRequired && !captchaToken) { setErrorMsg('أكمل التحقق الأمني أولًا'); return; }
     setStatus('submitting');
     setErrorMsg(null);
 
@@ -26,7 +42,7 @@ export default function LoginForm({ next }: { next: string }) {
         const res = await fetch('/api/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password }),
+          body: JSON.stringify({ email, password, ...(challengeRequired ? { captchaToken } : {}) }),
         });
         if (res.status === 401) {
           setStatus('idle');
@@ -46,7 +62,7 @@ export default function LoginForm({ next }: { next: string }) {
         window.location.assign(next);
       } else {
         const supabase = createClient();
-        const { error } = await supabase.auth.signUp({ email, password });
+        const { error } = await supabase.auth.signUp({ email, password, options: { emailRedirectTo: new URL('/login', window.location.origin).href, ...(challengeRequired ? { captchaToken } : {}) } });
         if (error) {
           setStatus('idle');
           setErrorMsg('تعذر إنشاء الحساب، تحقق من البريد أو جرّب لاحقًا');
@@ -58,6 +74,8 @@ export default function LoginForm({ next }: { next: string }) {
       // يشمل غياب متغيرات البيئة محليًا أو انقطاع الشبكة — رسالة صادقة بدل صفحة خطأ
       setStatus('idle');
       setErrorMsg('المصادقة غير مهيأة في هذه البيئة حاليًا');
+    } finally {
+      if (challengeRequired) { setCaptchaToken(''); setGeneration(value => value + 1); }
     }
   }
 
@@ -95,6 +113,8 @@ export default function LoginForm({ next }: { next: string }) {
         />
       </div>
 
+      {challengeRequired && <AuthChallenge onToken={setCaptchaToken} generation={generation} />}
+
       {errorMsg && (
         <p className="text-red-600 text-sm" role="alert" aria-live="polite" aria-atomic="true">
           {errorMsg}
@@ -103,7 +123,7 @@ export default function LoginForm({ next }: { next: string }) {
 
       <button
         type="submit"
-        disabled={status === 'submitting'}
+        disabled={status === 'submitting' || (challengeRequired && !captchaToken)}
         className="w-full bg-brand text-white font-semibold px-4 py-2.5 rounded-lg disabled:opacity-50"
       >
         {status === 'submitting' ? 'جارٍ المعالجة...' : mode === 'login' ? 'دخول' : 'إنشاء حساب'}
@@ -112,6 +132,7 @@ export default function LoginForm({ next }: { next: string }) {
       <button
         type="button"
         onClick={() => {
+          setCaptchaToken(''); setGeneration(value => value + 1);
           setMode(mode === 'login' ? 'signup' : 'login');
           setErrorMsg(null);
         }}
