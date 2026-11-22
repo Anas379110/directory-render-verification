@@ -1,6 +1,8 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
+import { sessionCookieOptions } from '../auth/session-cookie-options';
+import { readSiteConfig } from '../site-config';
 
 /**
  * عميل بصلاحيات المستخدم الموثّق (anon key + جلسته) — يخضع لـRLS الكاملة.
@@ -8,26 +10,30 @@ import { cookies } from 'next/headers';
  */
 export async function createServerSupabaseClient() {
   const cookieStore = await cookies();
+  const cookieOptions = sessionCookieOptions(readSiteConfig().origin, process.env.NODE_ENV === 'production');
   return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      cookieOptions,
       cookies: {
-        get(name: string) {
-          return cookieStore.get(name)?.value;
+        getAll() {
+          return cookieStore.getAll();
         },
-        set(name: string, value: string, options: CookieOptions) {
+        setAll(cookiesToSet: { name: string; value: string; options: CookieOptions }[]) {
           try {
-            cookieStore.set({ name, value, ...options });
+            for (const { name, value, options } of cookiesToSet) {
+              cookieStore.set({
+                name,
+                value,
+                ...options,
+                ...cookieOptions,
+                ...(options.maxAge === 0 ? { expires: new Date(0) } : {}),
+              });
+            }
           } catch {
-            // قراءة الجلسة من مكوّن خادم (RSC) لا تسمح بتعديل الكوكيز — التجاهل آمن هنا
-          }
-        },
-        remove(name: string, options: CookieOptions) {
-          try {
-            cookieStore.set({ name, value: '', ...options });
-          } catch {
-            // كما في set أعلاه
+            // RSC cannot persist cookies. Page refresh/deletion runs in proxy;
+            // Route Handlers use this complete batch adapter directly.
           }
         },
       },
