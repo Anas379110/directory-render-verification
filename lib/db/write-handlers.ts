@@ -1,3 +1,4 @@
+import { verificationWriterResponse } from './verification-write-guard';
 import { randomUUID, createHash } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { businessRegistrationSchema, reviewSchema } from '../validation/schemas';
@@ -43,6 +44,8 @@ export function createWriteHandlers(deps: WriteBoundaryDependencies) {
       if (limited) return limited;
       const user = await deps.getUser();
       if (!user) return NextResponse.json({ error: 'يجب تسجيل الدخول أولًا' }, { status: 401 });
+      const verificationDenial = verificationWriterResponse(user.id);
+      if (verificationDenial) return verificationDenial;
       const body = await readJson(request);
       if (!body.success) return body.response;
       const parsed = businessRegistrationSchema.safeParse(body.data);
@@ -75,6 +78,8 @@ export function createWriteHandlers(deps: WriteBoundaryDependencies) {
       if (limited) return limited;
       const user = await deps.getUser();
       if (!user) return NextResponse.json({ error: 'يجب تسجيل الدخول لإضافة تقييم' }, { status: 401 });
+      const verificationDenial = verificationWriterResponse(user.id);
+      if (verificationDenial) return verificationDenial;
       const body = await readJson(request);
       if (!body.success) return body.response;
       const parsed = reviewSchema.safeParse(body.data);
