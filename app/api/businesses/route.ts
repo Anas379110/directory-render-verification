@@ -1,3 +1,4 @@
+import { verificationWritePreflight, verificationWriterResponse } from '../../../lib/db/verification-write-guard';
 import { pausedWriteResponse } from '../../../lib/db/write-maintenance';
 import { getRestrictedWriteHandlers } from '../../../lib/db/restricted-writes';
 import { readJson } from '../../../lib/validation/read-json';
@@ -26,6 +27,8 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const paused = pausedWriteResponse();
   if (paused) return paused;
+  const verification = verificationWritePreflight();
+  if (verification) return verification;
   try {
     const restricted=getRestrictedWriteHandlers();
     if (restricted) return await restricted.business(request);
@@ -46,6 +49,8 @@ export async function POST(request: NextRequest) {
   if (!user) {
     return NextResponse.json({ error: 'يجب تسجيل الدخول أولًا' }, { status: 401 });
   }
+  const verificationDenial = verificationWriterResponse(user.id);
+  if (verificationDenial) return verificationDenial;
 
   const body = await readJson(request);
   if (!body.success) return body.response;
