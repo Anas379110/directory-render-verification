@@ -1,3 +1,4 @@
+import { getRestrictedModerationStore } from '../../lib/db/restricted-moderation';
 import { requireAdmin } from '../../lib/auth/requireAdmin';
 import { createAdminSupabaseClient } from '../../lib/supabase/server';
 import ApproveRejectButtons from './ApproveRejectButtons';
@@ -28,18 +29,29 @@ export default async function AdminQueuePage() {
   const admin = await requireAdmin();
   if (!admin) redirect('/'); // لا صفحة "غير مصرَّح" تكشف وجود لوحة إدارية — إعادة توجيه صامتة
 
+  const restricted = getRestrictedModerationStore();
+  let pending: { id: string; name: string; created_at: string }[] | null;
+  let pendingReviews: PendingReview[] | null;
+  if (restricted) {
+    pending = await restricted.listBusinesses(admin.userId) as typeof pending;
+    pendingReviews = await restricted.listReviews(admin.userId) as typeof pendingReviews;
+  } else {
   const supabaseAdmin = createAdminSupabaseClient();
-  const { data: pending } = await supabaseAdmin
+  const { data: oldPending } = await supabaseAdmin
     .from('businesses')
     .select('*')
     .eq('status', 'pending')
     .order('created_at', { ascending: true });
 
-  const { data: pendingReviews } = await supabaseAdmin
+  const { data: oldPendingReviews } = await supabaseAdmin
     .from('reviews')
     .select('id, rating, comment, created_at, businesses(name)')
     .eq('status', 'pending')
     .order('created_at', { ascending: true });
+
+    pending = oldPending;
+    pendingReviews = oldPendingReviews as PendingReview[] | null;
+  }
 
   return (
     <div>
