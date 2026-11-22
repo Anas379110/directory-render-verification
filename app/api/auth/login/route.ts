@@ -9,6 +9,7 @@ export const dynamic = 'force-dynamic';
 const loginSchema = z.object({
   email: z.string().trim().email(),
   password: z.string().min(1),
+  captchaToken: z.string().min(1).max(4096).optional(),
 });
 
 /**
@@ -27,10 +28,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'بيانات غير صالحة' }, { status: 400 });
   }
 
+  if (process.env.DIRECTORY_AUTH_CAPTCHA === 'true' && !parsed.data.captchaToken) {
+    return NextResponse.json({ error: 'أكمل التحقق الأمني' }, { status: 400 });
+  }
   const supabase = await createServerSupabaseClient();
   const { error } = await supabase.auth.signInWithPassword({
     email: parsed.data.email,
     password: parsed.data.password,
+    ...(parsed.data.captchaToken ? { options: { captchaToken: parsed.data.captchaToken } } : {}),
   });
   if (error) {
     return NextResponse.json({ error: 'بيانات الدخول غير صحيحة' }, { status: 401 });
