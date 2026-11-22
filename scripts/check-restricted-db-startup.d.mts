@@ -1,6 +1,6 @@
 export type ReadinessResult = { ok: true; skipped: true } | {
   ok: true; skipped: false; tlsAuthorized: true; limitedRoleChecked: true;
-  readOnlyTransactions: 2; claimsCleared: true; poolClosed: true;
+  readOnlyTransactions: 2 | 3; claimsCleared: true; poolClosed: true;
 };
 export class RestrictedDbReadinessError extends Error { stage: string; code: string | null; }
 export function runRestrictedDbReadiness(options?: {
