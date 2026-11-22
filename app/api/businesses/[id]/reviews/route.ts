@@ -1,3 +1,4 @@
+import { verificationWritePreflight, verificationWriterResponse } from '../../../../../lib/db/verification-write-guard';
 import { pausedWriteResponse } from '../../../../../lib/db/write-maintenance';
 import { getRestrictedWriteHandlers } from '../../../../../lib/db/restricted-writes';
 import { readJson } from '../../../../../lib/validation/read-json';
@@ -12,6 +13,8 @@ export const dynamic = 'force-dynamic';
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const paused = pausedWriteResponse();
   if (paused) return paused;
+  const verification = verificationWritePreflight();
+  if (verification) return verification;
   try {
     const restricted=getRestrictedWriteHandlers();
     if (restricted) return await restricted.review(request,(await params).id);
@@ -31,6 +34,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (!user) {
     return NextResponse.json({ error: 'يجب تسجيل الدخول لإضافة تقييم' }, { status: 401 });
   }
+  const verificationDenial = verificationWriterResponse(user.id);
+  if (verificationDenial) return verificationDenial;
 
   const body = await readJson(request);
   if (!body.success) return body.response;
