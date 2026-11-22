@@ -16,7 +16,13 @@
     "lint:scaffold": "npm --prefix directory run lint",
     "typecheck": "tsc --noEmit",
     "prepare:runtime": "node scripts/prepare-runtime.mjs",
-    "test:runtime-package": "node --test scripts/prepare-runtime.check.mjs"
+    "test:runtime-package": "node --test scripts/prepare-runtime.check.mjs",
+    "test:session-cookies:runtime": "node scripts/check-session-cookies-runtime.mjs",
+    "test:session-refresh:runtime": "node scripts/check-session-refresh-runtime.mjs",
+    "test:large-session:runtime": "node scripts/check-large-session-runtime.mjs",
+    "check:restricted-db-startup": "node scripts/check-restricted-db-startup.mjs",
+    "test:restricted-db-startup": "node --test scripts/check-restricted-db-startup.check.mjs",
+    "test:verification-writes:runtime": "node scripts/check-verification-writes-runtime.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.1",
