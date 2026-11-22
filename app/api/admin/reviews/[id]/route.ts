@@ -1,3 +1,4 @@
+import { getRestrictedModerationStore } from '../../../../../lib/db/restricted-moderation';
 import { readJson } from '../../../../../lib/validation/read-json';
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
@@ -31,6 +32,18 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   // The database transaction must commit both writes or neither. Actor comes
   // from verified server auth, never from the request body.
   try {
+    const restricted = getRestrictedModerationStore();
+    if (restricted) {
+      try {
+        const data = await restricted.moderateReview(admin.userId, id, parsed.data);
+        return NextResponse.json({ data });
+      } catch (error) {
+        const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
+        const statuses: Record<string, number> = { PT400: 400, PT403: 403, PT404: 404, PT409: 409 };
+        const status = Object.hasOwn(statuses, code) ? statuses[code] : 500;
+        return NextResponse.json({ error: status === 409 ? 'تمت مراجعة هذا الطلب بالفعل' : 'تعذر حفظ القرار وسجل التدقيق' }, { status });
+      }
+    }
     const supabaseAdmin = createAdminSupabaseClient();
     const { data, error } = await supabaseAdmin.rpc('moderate_review_atomic', {
       p_review_id: id,
@@ -58,4 +71,4 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   } catch {
     return NextResponse.json({ error: 'تعذر حفظ القرار وسجل التدقيق' }, { status: 500 });
   }
-}
+                             }
