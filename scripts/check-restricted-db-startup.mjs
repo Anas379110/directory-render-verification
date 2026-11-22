@@ -1,3 +1,4 @@
+import { checkModeratorCapabilities } from './check-moderator-capabilities.mjs';
 /** Non-public, opt-in startup check. READ ONLY transactions, no application writes. */
 import pg from 'pg';
 import assert from 'node:assert/strict';
@@ -22,8 +23,10 @@ export async function runRestrictedDbReadiness({env=process.env,Pool=pg.Pool,exp
   let stage='configuration',pool,client,began=false,failure,poolFaulted=false;
   try {
     assert.equal(flag,'true');
-    assert.equal(env.DIRECTORY_VERIFICATION_MODE,'true');
-    const actor=env.DIRECTORY_VERIFICATION_WRITER_ID?.trim();assert.ok(actor&&uuid.test(actor));
+    const moderation=env.DIRECTORY_MODERATION_MODE==='restricted';
+    if(!moderation)assert.equal(env.DIRECTORY_VERIFICATION_MODE,'true');
+    const actor=(moderation?env.DIRECTORY_STARTUP_ACTOR_ID:env.DIRECTORY_VERIFICATION_WRITER_ID)?.trim();assert.ok(actor&&uuid.test(actor));
+    const roles=moderation?[expectedRuntimeRole,'directory_app_writer','directory_app_moderator']:[expectedRuntimeRole,'directory_app_writer'];
     const config=readRestrictedWriterConfig(env);assert.equal(config.mode,'restricted');
     pool=new Pool({...restrictedPoolOptions(config),max:1});
     pool.on('error',()=>{poolFaulted=true;});stage='connection';client=await pool.connect();
@@ -34,16 +37,20 @@ export async function runRestrictedDbReadiness({env=process.env,Pool=pg.Pool,exp
       for(const key of ['sub','claim_role','claims'])assert.ok(!r[key]);
     };
     stage='role-and-grant-check';await clean();
-    const roleRows=(await client.query('SELECT rolname,rolcanlogin,rolinherit,rolsuper,rolcreaterole,rolcreatedb,rolreplication,rolbypassrls FROM pg_roles WHERE rolname=ANY($1::text[])',[[expectedRuntimeRole,'directory_app_writer']])).rows;
-    assert.equal(roleRows.length,2);
+    const roleRows=(await client.query('SELECT rolname,rolcanlogin,rolinherit,rolsuper,rolcreaterole,rolcreatedb,rolreplication,rolbypassrls FROM pg_roles WHERE rolname=ANY($1::text[])',[roles])).rows;
+    assert.equal(roleRows.length,roles.length);
     for(const role of roleRows){
       assert.equal(role.rolcanlogin,role.rolname===expectedRuntimeRole);
       for(const key of ['rolinherit','rolsuper','rolcreaterole','rolcreatedb','rolreplication','rolbypassrls'])assert.equal(role[key],false);
     }
-    const memberships=(await client.query(`SELECT pg_get_userbyid(member) AS member,pg_get_userbyid(roleid) AS role,admin_option,to_jsonb(a)->'set_option' AS set_option FROM pg_auth_members a WHERE member=ANY(SELECT oid FROM pg_roles WHERE rolname=ANY($1::text[]))`,[[expectedRuntimeRole,'directory_app_writer']])).rows;
-    assert.equal(memberships.length,1);assert.equal(memberships[0].member,expectedRuntimeRole);assert.equal(memberships[0].role,'directory_app_writer');assert.equal(memberships[0].admin_option,false);
-    // PG14 local fixtures lack set_option; successful SET ROLE below is also required.
-    assert.ok(memberships[0].set_option===null||memberships[0].set_option===true);
+    const memberships=(await client.query(`SELECT pg_get_userbyid(member) AS member,pg_get_userbyid(roleid) AS role,admin_option,to_jsonb(a)->'set_option' AS set_option,to_jsonb(a)->'inherit_option' AS inherit_option FROM pg_auth_members a WHERE member=ANY(SELECT oid FROM pg_roles WHERE rolname=ANY($1::text[]))`,[roles])).rows;
+    assert.equal(memberships.length,roles.length-1);
+    for(const role of roles.slice(1)) {
+      const membership=memberships.find(value=>value.role===role);
+      assert.ok(membership);assert.equal(membership.member,expectedRuntimeRole);assert.equal(membership.admin_option,false);
+      assert.ok(membership.set_option===null||membership.set_option===true);
+      if(membership.inherit_option!==undefined&&membership.inherit_option!==null)assert.equal(membership.inherit_option,false);
+    }
     const runtimePermissions=(await client.query(permissions,[relations])).rows;assert.equal(runtimePermissions.length,relations.length);
     for(const row of runtimePermissions)for(const key of ['sel','ins','upd','del','trunc','trig','refs'])assert.equal(row[key],false);
     for(const end of ['COMMIT','ROLLBACK']) {
@@ -62,6 +69,14 @@ export async function runRestrictedDbReadiness({env=process.env,Pool=pg.Pool,exp
       await client.query('SELECT id FROM public.businesses LIMIT 0');await client.query('SELECT id FROM public.reviews LIMIT 0');await client.query('SELECT record_id FROM directory_internal.write_events LIMIT 0');
       await client.query(end);began=false;await clean();
     }
+    if(moderation) {
+      stage='moderator-capabilities';
+      await client.query('BEGIN READ ONLY');began=true;
+      await client.query('SET LOCAL ROLE directory_app_moderator');
+      await client.query("SELECT set_config('request.jwt.claim.sub',$1,true),set_config('request.jwt.claim.role','directory_app_moderator',true)",[actor]);
+      await checkModeratorCapabilities(client,actor);
+      await client.query('ROLLBACK');began=false;await clean();
+    }
     client.release();client=undefined;stage='reuse';client=await pool.connect();await clean();assert.equal(poolFaulted,false);
   } catch(error) { failure=new RestrictedDbReadinessError(stage,error?.code); }
   finally {
@@ -72,10 +87,10 @@ export async function runRestrictedDbReadiness({env=process.env,Pool=pg.Pool,exp
     if(pool)try{await pool.end();}catch{failure??=new RestrictedDbReadinessError('cleanup',null);}
   }
   if(failure)throw failure;
-  return {ok:true,skipped:false,tlsAuthorized:true,limitedRoleChecked:true,readOnlyTransactions:2,claimsCleared:true,poolClosed:true};
+  return {ok:true,skipped:false,tlsAuthorized:true,limitedRoleChecked:true,readOnlyTransactions:env.DIRECTORY_MODERATION_MODE==='restricted'?3:2,claimsCleared:true,poolClosed:true};
 }
 
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
   try {console.log(JSON.stringify(await runRestrictedDbReadiness()));}
   catch(error){console.error(JSON.stringify({ok:false,stage:error.stage??'unknown',code:error.code??null}));process.exitCode=1;}
-}
+      }
